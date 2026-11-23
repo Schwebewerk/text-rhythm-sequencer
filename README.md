@@ -1,5 +1,7 @@
 # Text Rhythm Sequencer
 
+[![Open the sequencer](https://img.shields.io/badge/Open_the_sequencer-%E2%96%B6-e2570f?style=for-the-badge)](https://schwebewerk.github.io/text-rhythm-sequencer/)
+
 A single-page step sequencer for reviewing rhythmic ideas written as plain text.
 
 ```
