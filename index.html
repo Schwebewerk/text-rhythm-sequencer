@@ -178,6 +178,14 @@ input[type="range"] { accent-color: var(--accent); width: 150px; }
     "_________*_________*____",
     "++++_._._._.++++_._._._."
   ].join("\n");
+  // default instruments for the example, by line index (0-based) and symbol
+  var EXAMPLE_SOUNDS = [[0, "-", "hat"], [1, "|", "kick"], [2, "*", "snare"], [3, "+", "wood"], [3, ".", "clave"]];
+  function applyExampleSounds() {
+    EXAMPLE_SOUNDS.forEach(function (e) {
+      state.assign[e[0] + ":" + e[1]] = e[2];   // "two sounds" mode key
+      state.assign["s:" + e[1]] = e[2];         // "one sound" mode key
+    });
+  }
 
   var SOUNDS = [
     ["kick", "Kick"], ["hat", "Hi-hat closed"], ["clave", "Clave"], ["snare", "Snare"],
@@ -215,6 +223,7 @@ input[type="range"] { accent-color: var(--accent); width: 150px; }
       state.assign = s.assign || {};
       state.muted = s.muted || {};
     }
+    if (!s || typeof s.text !== "string") applyExampleSounds();
   }
 
   /* ---------- parsing ---------- */
@@ -457,7 +466,7 @@ input[type="range"] { accent-color: var(--accent); width: 150px; }
     var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (f) { e.preventDefault(); loadFile(f); }
   });
-  $("reset").addEventListener("click", function () { text.value = EXAMPLE; parse(); save(); });
+  $("reset").addEventListener("click", function () { text.value = EXAMPLE; applyExampleSounds(); voiceSig = "\u0000"; parse(); save(); });
   $("copy").addEventListener("click", function () {
     var b = $("copy");
     function done(ok) { b.textContent = ok ? "Copied" : "Select and copy manually"; setTimeout(function () { b.textContent = "Copy text"; }, 1500); }
