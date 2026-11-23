@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text Rhythm Sequencer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: one column. Transport on top, the text grid as the main surface, voice table below. */
+:root {
+  --bg: #eef0f2;
+  --surface: #ffffff;
+  --ink: #16202a;
+  --muted: #5d6b78;
+  --line: #cfd6dc;
+  --accent: #e2570f;      /* playhead, active state */
+  --accent-soft: #fbd9c4;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171c; --surface: #1b2229; --ink: #e6ebef; --muted: #93a1ad;
+    --line: #313c46; --accent: #ff7a33; --accent-soft: #5a2d14;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171c; --surface: #1b2229; --ink: #e6ebef; --muted: #93a1ad;
+  --line: #313c46; --accent: #ff7a33; --accent-soft: #5a2d14;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-ui); font-size: 15px; line-height: 1.45;
+}
+main { max-width: 980px; margin: 0 auto; padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 18px; font-weight: 600; margin: 0; }
+h2 { font-size: 13px; font-weight: 600; margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.head p { margin: 0; color: var(--muted); font-size: 13px; }
+
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+}
+.group { display: flex; align-items: center; gap: 8px; }
+label { font-size: 13px; color: var(--muted); }
+button, select, input[type="number"] {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--muted); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#play {
+  min-width: 92px; font-weight: 600; background: var(--ink); color: var(--bg); border-color: var(--ink);
+}
+#play[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+input[type="number"] { width: 78px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+input[type="range"] { accent-color: var(--accent); width: 150px; }
+.readout { font-family: var(--font-mono); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 9ch; }
+
+.editor {
+  position: relative; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+}
+.editor.drop { border-color: var(--accent); }
+#playhead {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 0;
+  background: var(--accent-soft); border-left: 2px solid var(--accent);
+  pointer-events: none; display: none;
+}
+#text, #measure {
+  font-family: var(--font-mono); font-size: 24px; line-height: 1.5; letter-spacing: .18em; font-weight: 500;
+  tab-size: 1;
+}
+#text {
+  position: relative; display: block; width: 100%; min-height: 220px;
+  padding: 14px 16px; margin: 0; border: 0; outline: 0; resize: vertical;
+  background: transparent; color: var(--ink);
+  white-space: pre; overflow: auto;
+}
+#measure { position: absolute; visibility: hidden; white-space: pre; top: 0; left: 0; }
+.status { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.status b { color: var(--ink); font-family: var(--font-mono); font-weight: 500; }
+
+.voices { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 8px; }
+.voice {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+}
+.voice .sym {
+  flex: none; width: 34px; height: 34px; display: grid; place-items: center;
+  font-family: var(--font-mono); font-size: 20px; font-weight: 600;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+}
+.voice.hit .sym { background: var(--accent); border-color: var(--accent); color: #fff; }
+.voice .where { flex: none; width: 48px; font-size: 12px; color: var(--muted); }
+.voice select { flex: 1; min-width: 0; padding: 5px 6px; }
+.voice button { flex: none; padding: 5px 8px; font-size: 12px; }
+.voice button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.voice.muted .sym { opacity: .35; }
+.empty { color: var(--muted); font-size: 13px; }
+.hint { color: var(--muted); font-size: 13px; margin: 0; max-width: 70ch; }
+.hint code { font-family: var(--font-mono); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+#file { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <div class="head">
+    <h1>Text Rhythm Sequencer</h1>
+    <p>One line per track, one character per step, loops forever.</p>
+  </div>
+
+  <div class="bar">
+    <button id="play" type="button" aria-pressed="false">Play</button>
+    <div class="group">
+      <label for="spm">Steps/min</label>
+      <input id="spm" type="number" min="30" max="2000" step="1" value="360">
+      <input id="spmRange" type="range" min="60" max="1200" step="1" value="360" aria-label="Steps per minute">
+      <span class="readout" id="ms"></span>
+    </div>
+    <div class="group">
+      <label for="vol">Volume</label>
+      <input id="vol" type="range" min="0" max="1" step="0.01" value="0.8">
+    </div>
+    <div class="group">
+      <label for="short">Shorter lines</label>
+      <select id="short">
+        <option value="pad">stay silent until the longest line ends</option>
+        <option value="loop">repeat on their own length</option>
+      </select>
+    </div>
+    <div class="group">
+      <label for="keymode">Same symbol on two lines</label>
+      <select id="keymode">
+        <option value="line">two sounds</option>
+        <option value="symbol">one sound</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="editor" id="editor">
+    <div id="playhead"></div>
+    <span id="measure" aria-hidden="true"></span>
+    <textarea id="text" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Pattern text"></textarea>
+  </div>
+
+  <div class="status">
+    <span>Loop length <b id="len">0</b> steps</span>
+    <span>Step <b id="pos">-</b></span>
+    <span>Loop time <b id="dur">-</b></span>
+    <span style="flex:1"></span>
+    <button id="open" type="button">Open text file</button>
+    <button id="copy" type="button">Copy text</button>
+    <button id="reset" type="button">Load example</button>
+    <input id="file" type="file" accept=".txt,text/plain">
+  </div>
+
+  <h2>Sounds</h2>
+  <div class="voices" id="voices"></div>
+
+  <p class="hint"><code>_</code> and spaces are silent. Every other character triggers a sound. Edits apply while playing. Space starts and stops when the text field is not focused, Ctrl/Cmd+Enter works inside it. Text files can also be dropped onto the field.</p>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var EXAMPLE = [
+    "|--|--|--|--",
+    "...._._._._.",
+    "x__x________",
+    "_x_x________",
+    "_________*__",
+    "_______*____"
+  ].join("\n");
+
+  var SOUNDS = [
+    ["kick", "Kick"], ["hat", "Hi-hat closed"], ["clave", "Clave"], ["snare", "Snare"],
+    ["cowbell", "Cowbell"], ["tomlo", "Tom low"], ["tomhi", "Tom high"], ["clap", "Clap"],
+    ["wood", "Woodblock"], ["rim", "Rimshot"], ["shaker", "Shaker"], ["ohat", "Hi-hat open"],
+    ["bell", "Bell tone"]
+  ];
+  var STORE = "textseq.v1";
+  var $ = function (id) { return document.getElementById(id); };
+  var text = $("text"), playBtn = $("play"), spmIn = $("spm"), spmRange = $("spmRange"),
+      volIn = $("vol"), shortSel = $("short"), keySel = $("keymode"),
+      playhead = $("playhead"), measure = $("measure"), voicesEl = $("voices");
+
+  var state = { assign: {}, muted: {} };
+  var lines = [], maxLen = 0, voices = [], voiceSig = "";
+
+  /* ---------- persistence ---------- */
+  function save() {
+    try {
+      localStorage.setItem(STORE, JSON.stringify({
+        text: text.value, spm: +spmIn.value, vol: +volIn.value,
+        short: shortSel.value, keymode: keySel.value, assign: state.assign, muted: state.muted
+      }));
+    } catch (e) {}
+  }
+  function load() {
+    var s = null;
+    try { s = JSON.parse(localStorage.getItem(STORE)); } catch (e) {}
+    text.value = s && typeof s.text === "string" ? s.text : EXAMPLE;
+    if (s) {
+      if (s.spm) setSpm(s.spm);
+      if (typeof s.vol === "number") volIn.value = s.vol;
+      if (s.short) shortSel.value = s.short;
+      if (s.keymode) keySel.value = s.keymode;
+      state.assign = s.assign || {};
+      state.muted = s.muted || {};
+    }
+  }
+
+  /* ---------- parsing ---------- */
+  function isSilent(ch) { return ch === "_" || ch === " " || ch === "\t"; }
+  function keyOf(lineIdx, ch) { return keySel.value === "symbol" ? "s:" + ch : lineIdx + ":" + ch; }
+
+  function parse() {
+    lines = text.value.replace(/\r/g, "").split("\n").map(function (l) {
+      return Array.from(l.replace(/[ \t]+$/, ""));
+    });
+    maxLen = lines.reduce(function (m, l) { return Math.max(m, l.length); }, 0);
+    var seen = {}; voices = [];
+    lines.forEach(function (l, i) {
+      l.forEach(function (ch) {
+        if (isSilent(ch)) return;
+        var k = keyOf(i, ch);
+        if (seen[k]) return;
+        seen[k] = true;
+        voices.push({ key: k, ch: ch, line: i });
+      });
+    });
+    // assign default sounds to new voices: first sound not used yet, else cycle
+    var used = {};
+    voices.forEach(function (v) { if (state.assign[v.key]) used[state.assign[v.key]] = true; });
+    var cyc = 0;
+    voices.forEach(function (v) {
+      if (state.assign[v.key]) return;
+      var pick = null;
+      for (var i = 0; i < SOUNDS.length; i++) if (!used[SOUNDS[i][0]]) { pick = SOUNDS[i][0]; break; }
+      if (!pick) pick = SOUNDS[cyc++ % SOUNDS.length][0];
+      state.assign[v.key] = pick; used[pick] = true;
+    });
+    var sig = voices.map(function (v) { return v.key; }).join("|");
+    if (sig !== voiceSig) { voiceSig = sig; renderVoices(); }
+    $("len").textContent = maxLen;
+    updateReadouts();
+    text.rows = Math.max(6, lines.length + 1);
+  }
+
+  function renderVoices() {
+    voicesEl.textContent = "";
+    if (!voices.length) {
+      var p = document.createElement("div"); p.className = "empty";
+      p.textContent = "No sounding characters yet. Type something other than _ into the field.";
+      voicesEl.appendChild(p); return;
+    }
+    voices.forEach(function (v, n) {
+      var row = document.createElement("div");
+      row.className = "voice" + (state.muted[v.key] ? " muted" : "");
+      row.dataset.key = v.key;
+      var sym = document.createElement("span"); sym.className = "sym"; sym.textContent = v.ch;
+      var where = document.createElement("span"); where.className = "where";
+      where.textContent = keySel.value === "symbol" ? "all lines" : "line " + (v.line + 1);
+      var sel = document.createElement("select"); sel.id = "voice-sound-" + n;
+      sel.setAttribute("aria-label", "Sound for " + v.ch);
+      SOUNDS.forEach(function (s) {
+        var o = document.createElement("option"); o.value = s[0]; o.textContent = s[1]; sel.appendChild(o);
+      });
+      sel.value = state.assign[v.key];
+      sel.addEventListener("change", function () {
+        state.assign[v.key] = sel.value; save();
+        if (ensureAudio()) trigger(sel.value, ctx.currentTime + 0.02);
+      });
+      var mute = document.createElement("button"); mute.type = "button"; mute.textContent = "Mute";
+      mute.setAttribute("aria-pressed", state.muted[v.key] ? "true" : "false");
+      mute.addEventListener("click", function () {
+        if (state.muted[v.key]) delete state.muted[v.key]; else state.muted[v.key] = true;
+        mute.setAttribute("aria-pressed", state.muted[v.key] ? "true" : "false");
+        row.classList.toggle("muted", !!state.muted[v.key]); save();
+      });
+      row.appendChild(sym); row.appendChild(where); row.appendChild(sel); row.appendChild(mute);
+      voicesEl.appendChild(row);
+    });
+  }
+
+  /* ---------- audio ---------- */
+  var ctx = null, master = null, noiseBuf = null;
+  function ensureAudio() {
+    try {
+      if (!ctx) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        ctx = new AC();
+        master = ctx.createGain(); master.gain.value = +volIn.value;
+        var comp = ctx.createDynamicsCompressor();
+        comp.threshold.value = -10; comp.ratio.value = 4;
+        master.connect(comp); comp.connect(ctx.destination);
+        noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+        var d = noiseBuf.getChannelData(0);
+        for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      }
+      if (ctx.state === "suspended") ctx.resume();
+      return true;
+    } catch (e) { return false; }
+  }
+  function tone(type, f0, f1, t, dec, peak, sweep) {
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f0, t);
+    if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + (sweep || dec));
+    g.gain.setValueAtTime(peak, t); g.gain.exponentialRampToValueAtTime(0.001, t + dec);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + dec + 0.02);
+  }
+  function noise(t, dec, peak, ftype, freq, q, attack) {
+    var s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    s.buffer = noiseBuf; s.loop = true;
+    f.type = ftype; f.frequency.value = freq; if (q) f.Q.value = q;
+    if (attack) { g.gain.setValueAtTime(0.001, t); g.gain.exponentialRampToValueAtTime(peak, t + attack); }
+    else g.gain.setValueAtTime(peak, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dec);
+    s.connect(f); f.connect(g); g.connect(master);
+    s.start(t, Math.random() * 0.5); s.stop(t + dec + 0.02);
+  }
+  var SYNTH = {
+    kick:    function (t) { tone("sine", 150, 45, t, 0.32, 1.0, 0.12); },
+    snare:   function (t) { noise(t, 0.16, 0.6, "highpass", 1500); tone("triangle", 190, 140, t, 0.1, 0.5); },
+    hat:     function (t) { noise(t, 0.045, 0.35, "highpass", 7500); },
+    ohat:    function (t) { noise(t, 0.3, 0.3, "highpass", 7000); },
+    clap:    function (t) { [0, 0.012, 0.024].forEach(function (o) { noise(t + o, 0.03, 0.5, "bandpass", 1300, 1.2); }); noise(t + 0.03, 0.14, 0.45, "bandpass", 1300, 1.2); },
+    clave:   function (t) { tone("triangle", 2500, 0, t, 0.06, 0.6); },
+    cowbell: function (t) { tone("square", 540, 0, t, 0.22, 0.22); tone("square", 800, 0, t, 0.22, 0.22); },
+    tomlo:   function (t) { tone("sine", 130, 85, t, 0.3, 0.9); },
+    tomhi:   function (t) { tone("sine", 260, 170, t, 0.22, 0.8); },
+    wood:    function (t) { tone("sine", 880, 0, t, 0.05, 0.7); tone("sine", 1320, 0, t, 0.03, 0.3); },
+    rim:     function (t) { tone("triangle", 1700, 0, t, 0.03, 0.5); noise(t, 0.02, 0.3, "highpass", 3000); },
+    shaker:  function (t) { noise(t, 0.09, 0.35, "bandpass", 5500, 1.5, 0.02); },
+    bell:    function (t) { tone("sine", 1760, 0, t, 0.35, 0.3); tone("sine", 2637, 0, t, 0.2, 0.12); }
+  };
+  function trigger(id, t) { (SYNTH[id] || SYNTH.clave)(t); }
+
+  /* ---------- scheduler ---------- */
+  var playing = false, timer = null, step = 0, nextTime = 0, queue = [];
+  function stepDur() { return 60 / clampSpm(+spmIn.value); }
+
+  function scheduleStep(n, t) {
+    var hit = {};
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i]; if (!l.length) continue;
+      var idx = shortSel.value === "loop" ? n % l.length : n;
+      if (idx >= l.length) continue;
+      var ch = l[idx]; if (isSilent(ch)) continue;
+      var k = keyOf(i, ch);
+      if (hit[k] || state.muted[k]) continue;
+      hit[k] = true;
+      trigger(state.assign[k], t);
+    }
+    queue.push({ col: maxLen ? n % maxLen : 0, t: t, hit: hit });
+  }
+  function tick() {
+    if (!maxLen) return;
+    if (nextTime < ctx.currentTime) nextTime = ctx.currentTime + 0.03;
+    while (nextTime < ctx.currentTime + 0.12) {
+      if (shortSel.value === "pad") step = step % maxLen;
+      scheduleStep(step, nextTime);
+      step++;
+      nextTime += stepDur();
+    }
+  }
+  function start() {
+    if (!ensureAudio()) return;
+    playing = true; step = 0; queue = [];
+    nextTime = ctx.currentTime + 0.06;
+    timer = setInterval(tick, 25); tick();
+    playBtn.textContent = "Stop"; playBtn.setAttribute("aria-pressed", "true");
+    playhead.style.display = "block";
+    requestAnimationFrame(draw);
+  }
+  function stop() {
+    playing = false; clearInterval(timer); queue = [];
+    playBtn.textContent = "Play"; playBtn.setAttribute("aria-pressed", "false");
+    playhead.style.display = "none"; $("pos").textContent = "-";
+    Array.prototype.forEach.call(voicesEl.children, function (r) { r.classList.remove("hit"); });
+  }
+  function toggle() { if (playing) stop(); else start(); }
+
+  /* ---------- playhead ---------- */
+  var chW = 16, padL = 16, curCol = 0;
+  function measureCh() {
+    measure.textContent = new Array(101).join("_");
+    chW = measure.getBoundingClientRect().width / 100 || 16;
+    padL = parseFloat(getComputedStyle(text).paddingLeft) || 16;
+    place();
+  }
+  function place() {
+    playhead.style.left = (padL + curCol * chW - text.scrollLeft) + "px";
+    playhead.style.width = chW + "px";
+  }
+  function draw() {
+    if (!playing) return;
+    var now = ctx.currentTime, cur = null;
+    while (queue.length && queue[0].t <= now) cur = queue.shift();
+    if (cur) {
+      curCol = cur.col; place();
+      $("pos").textContent = (cur.col + 1) + " / " + maxLen;
+      Array.prototype.forEach.call(voicesEl.children, function (r) {
+        r.classList.toggle("hit", !!cur.hit[r.dataset.key]);
+      });
+    }
+    requestAnimationFrame(draw);
+  }
+
+  /* ---------- controls ---------- */
+  function clampSpm(v) { return Math.min(2000, Math.max(30, v || 360)); }
+  function setSpm(v) { v = clampSpm(Math.round(v)); spmIn.value = v; spmRange.value = v; updateReadouts(); }
+  function updateReadouts() {
+    var d = stepDur();
+    $("ms").textContent = Math.round(d * 1000) + " ms/step";
+    $("dur").textContent = maxLen ? (d * maxLen).toFixed(2) + " s" : "-";
+  }
+  spmIn.addEventListener("change", function () { setSpm(+spmIn.value); save(); });
+  spmIn.addEventListener("input", function () { if (+spmIn.value >= 30) { spmRange.value = spmIn.value; updateReadouts(); } });
+  spmRange.addEventListener("input", function () { setSpm(+spmRange.value); save(); });
+  volIn.addEventListener("input", function () { if (master) master.gain.value = +volIn.value; save(); });
+  shortSel.addEventListener("change", function () { step = 0; save(); });
+  keySel.addEventListener("change", function () { voiceSig = "\u0000"; parse(); save(); });
+  playBtn.addEventListener("click", toggle);
+  text.addEventListener("input", function () { parse(); save(); });
+  text.addEventListener("scroll", place);
+  window.addEventListener("resize", measureCh);
+
+  document.addEventListener("keydown", function (e) {
+    var tag = (e.target.tagName || "").toLowerCase();
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); toggle(); return; }
+    if (e.code === "Space" && tag !== "textarea" && tag !== "input" && tag !== "select" && tag !== "button") {
+      e.preventDefault(); toggle();
+    }
+  });
+
+  function loadFile(f) {
+    if (!f) return;
+    var r = new FileReader();
+    r.onload = function () { text.value = String(r.result).replace(/\r/g, ""); parse(); save(); };
+    r.readAsText(f);
+  }
+  $("open").addEventListener("click", function () { $("file").click(); });
+  $("file").addEventListener("change", function (e) { loadFile(e.target.files[0]); e.target.value = ""; });
+  var ed = $("editor");
+  ed.addEventListener("dragover", function (e) { e.preventDefault(); ed.classList.add("drop"); });
+  ed.addEventListener("dragleave", function () { ed.classList.remove("drop"); });
+  ed.addEventListener("drop", function (e) {
+    ed.classList.remove("drop");
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) { e.preventDefault(); loadFile(f); }
+  });
+  $("reset").addEventListener("click", function () { text.value = EXAMPLE; parse(); save(); });
+  $("copy").addEventListener("click", function () {
+    var b = $("copy");
+    function done(ok) { b.textContent = ok ? "Copied" : "Select and copy manually"; setTimeout(function () { b.textContent = "Copy text"; }, 1500); }
+    try {
+      navigator.clipboard.writeText(text.value).then(function () { done(true); }, function () {
+        text.select(); var ok = false; try { ok = document.execCommand("copy"); } catch (e) {} done(ok);
+      });
+    } catch (e) { text.select(); done(false); }
+  });
+
+  /* ---------- init ---------- */
+  load(); parse(); updateReadouts(); measureCh();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureCh);
+})();
+</script>
+</body>
+</html>
